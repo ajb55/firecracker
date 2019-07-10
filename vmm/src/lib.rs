@@ -1319,7 +1319,7 @@ impl Vmm {
         Ok(entry_addr)
     }
 
-    fn configure_system(&self) -> std::result::Result<(), StartMicrovmError> {
+    fn configure_system(&self, pvh_boot: bool) -> std::result::Result<(), StartMicrovmError> {
         let kernel_config = self
             .kernel_config
             .as_ref()
@@ -1340,6 +1340,7 @@ impl Vmm {
             kernel_config.cmdline_addr,
             kernel_config.cmdline.len() + 1,
             vcpu_count,
+            pvh_boot,
         )
         .map_err(StartMicrovmError::ConfigureSystem)?;
 
@@ -1402,6 +1403,8 @@ impl Vmm {
 
         let vcpus;
 
+        let mut pvh_boot: bool = Default::default();
+
         // For x86_64 we need to create the interrupt controller before calling `KVM_CREATE_VCPUS`
         // while on aarch64 we need to do it the other way around.
         #[cfg(target_arch = "x86_64")]
@@ -1412,6 +1415,10 @@ impl Vmm {
 
             let entry_addr = self.load_kernel()?;
             vcpus = self.create_vcpus(entry_addr, request_ts)?;
+            warn!("In START_MICROVM(), entry_addr.offset() is {:#x?}", entry_addr.offset());
+            pvh_boot = entry_addr.offset() != 0x1000000 as usize;
+       
+            warn!("In START_MICROVM(), pvh_boot is {:?}", pvh_boot);
         }
 
         #[cfg(target_arch = "aarch64")]
@@ -1424,7 +1431,7 @@ impl Vmm {
             self.attach_legacy_devices()?;
         }
 
-        self.configure_system()?;
+        self.configure_system(pvh_boot)?;
 
         self.register_events()?;
 

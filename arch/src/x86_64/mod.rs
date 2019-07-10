@@ -99,7 +99,12 @@ pub fn configure_system(
     cmdline_addr: GuestAddress,
     cmdline_size: usize,
     num_cpus: u8,
+    pvh_boot: bool,
 ) -> super::Result<()> {
+    if pvh_boot {
+        setup_pvh_boot(guest_mem, cmdline_addr, cmdline_size, num_cpus)?;
+        return Ok(());
+    }
     const KERNEL_BOOT_FLAG_MAGIC: u16 = 0xaa55;
     const KERNEL_HDR_MAGIC: u32 = 0x5372_6448;
     const KERNEL_LOADER_OTHER: u8 = 0xff;
@@ -118,7 +123,7 @@ pub fn configure_system(
     params.0.hdr.boot_flag = KERNEL_BOOT_FLAG_MAGIC;
     params.0.hdr.header = KERNEL_HDR_MAGIC;
     params.0.hdr.cmd_line_ptr = cmdline_addr.offset() as u32;
-    warn!("The address of the kernel CMDLINE copied into bootparams is {:#x?}", cmdline_addr);
+    warn!("The address of the kernel CMDLINE copied into bootparams is {:#x?}", cmdline_addr.offset() as u32);
     params.0.hdr.cmdline_size = cmdline_size as u32;
     params.0.hdr.kernel_alignment = KERNEL_MIN_ALIGNMENT_BYTES;
 
@@ -157,6 +162,74 @@ pub fn configure_system(
         .write_obj_at_addr(params, zero_page_addr)
         .map_err(|_| Error::ZeroPageSetup)?;
 
+    Ok(())
+}
+
+#[repr(C)]
+#[derive(Debug, Copy, Clone)]
+pub struct hvm_start_info {
+    pub magic: u32,
+    pub version: u32,
+    pub flags: u32,
+    pub nr_modules: u32,
+    pub modlist_paddr: u64,
+    pub cmdline_paddr: u64,
+    pub rsdp_paddr: u64,
+    pub memmap_paddr: u64,
+    pub memmap_entries: u32,
+    pub reserved: u32,
+}
+
+#[repr(C)]
+#[derive(Debug, Copy, Clone)]
+pub struct hvm_modlist_entry {
+    pub paddr: u64,
+    pub size: u64,
+    pub cmdline_paddr: u64,
+    pub reserved: u64,
+}
+
+#[repr(C)]
+#[derive(Debug, Copy, Clone)]
+pub struct hvm_memmap_table_entry {
+    pub addr: u64,
+    pub size: u64,
+    pub type_: u32,
+    pub reserved: u32,
+}
+
+impl Default for hvm_start_info {
+    fn default() -> Self {
+        unsafe { ::std::mem::zeroed() }
+    }
+}
+
+#[derive(Debug, Copy, Clone)]
+struct HvmStartInfoWrapper(hvm_start_info);
+
+unsafe impl DataInit for HvmStartInfoWrapper {}
+
+fn setup_pvh_boot(
+    guest_mem: &GuestMemory,
+    cmdline_addr: GuestAddress,
+    cmdline_size: usize,
+    num_cpus: u8,
+) -> super::Result<()> {
+
+    const XEN_HVM_START_MAGIC_VALUE: u32 = 0x336ec578;
+
+    let mut start_info: HvmStartInfoWrapper = HvmStartInfoWrapper(hvm_start_info::default());
+    start_info.0.magic = XEN_HVM_START_MAGIC_VALUE;
+    start_info.0.version = 1;   // pvh has version 1
+    start_info.0.nr_modules = 0;
+    start_info.0.cmdline_paddr = cmdline_addr.offset() as u64;
+
+    // The next two values must come from the memory maps (E820)
+    // start_info->memmap_entries = memmap_entries;
+    // start_info->memmap_paddr = MEMMAP_START;
+
+    warn!("In setup_pvh_boot, initialized hvm_start_info {:#x?}", start_info);
+    warn!("In setup_pvh_boot(), returning OK");
     Ok(())
 }
 
