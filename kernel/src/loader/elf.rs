@@ -21,6 +21,20 @@ pub const ELFMAG0: ::std::os::raw::c_uint = 127;
 pub const ELFDATA2LSB: ::std::os::raw::c_uint = 1;
 pub const PT_LOAD: ::std::os::raw::c_uint = 1;
 
+// Adding the Note p_type in order to parse the PVH entry point
+pub const PT_NOTE: ::std::os::raw::c_uint = 4;
+
+/*
+ * Physical entry point into the kernel.
+ *
+ * 32bit entry point into the kernel. When requested to launch the
+ * guest kernel, use this entry point to launch the guest in 32-bit
+ * protected mode with paging disabled.
+ *
+ * [ Corresponding definition in Linux kernel: include/xen/interface/elfnote.h ]
+ */
+pub const XEN_ELFNOTE_PHYS32_ENTRY: u32 = 18; /* 0x12 */
+
 pub const ELFMAG1: u8 = b'E';
 pub const ELFMAG2: u8 = b'L';
 pub const ELFMAG3: u8 = b'F';
@@ -84,6 +98,21 @@ impl Clone for elf64_phdr {
     }
 }
 pub type Elf64_Phdr = elf64_phdr;
+
+#[repr(C)]
+#[derive(Debug, Default, Copy)]
+pub struct elf64_nhdr {
+    pub n_namesz: Elf64_Word, // Name size
+    pub n_descsz: Elf64_Word, // Content size
+    pub n_type: Elf64_Word,   // Content type
+}
+
+impl Clone for elf64_nhdr {
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+pub type Elf64_Nhdr = elf64_nhdr;
 
 #[cfg(test)]
 mod tests {

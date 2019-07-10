@@ -6,6 +6,9 @@ extern crate kvm_bindings;
 extern crate kvm_ioctls;
 extern crate libc;
 
+#[macro_use]
+extern crate logger;
+
 extern crate arch_gen;
 extern crate memory_model;
 

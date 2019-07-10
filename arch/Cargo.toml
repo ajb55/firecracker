@@ -11,6 +11,7 @@ libc = ">=0.2.39"
 
 arch_gen = { path = "../arch_gen" }
 memory_model = { path = "../memory_model" }
+logger = { path = "../logger" }
 
 [dev-dependencies]
 rand = ">=0.5.5"

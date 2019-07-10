@@ -7,6 +7,10 @@
 
 //! Helper for loading a kernel image in the guest memory.
 
+extern crate logger;
+
+use byteorder::{ByteOrder, LittleEndian};
+
 use std;
 use std::ffi::CString;
 use std::fmt;
@@ -16,6 +20,9 @@ use std::mem;
 use super::cmdline::Error as CmdlineError;
 use memory_model::{GuestAddress, GuestMemory};
 use sys_util;
+
+use self::logger::LOGGER;
+use std::ops::Deref;
 
 #[allow(non_camel_case_types)]
 #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
@@ -35,6 +42,7 @@ pub enum Error {
     SeekKernelStart,
     SeekKernelImage,
     SeekProgramHeader,
+    SeekNoteHeader,
 }
 
 impl fmt::Display for Error {
@@ -56,6 +64,7 @@ impl fmt::Display for Error {
                 }
                 Error::SeekKernelImage => "Failed to seek to offset of kernel image",
                 Error::SeekProgramHeader => "Failed to seek to ELF program header",
+                Error::SeekNoteHeader => "Failed to seek to ELF note header",
             }
         )
     }
@@ -82,6 +91,7 @@ where
     F: Read + Seek,
 {
     let mut ehdr: elf::Elf64_Ehdr = Default::default();
+
     kernel_image
         .seek(SeekFrom::Start(0))
         .map_err(|_| Error::SeekKernelImage)?;
@@ -99,6 +109,15 @@ where
     {
         return Err(Error::InvalidElfMagicNumber);
     }
+
+    if let Err(e) = LOGGER.deref().preinit(Some("MY-TEST-INSTANCE".to_string())) {
+        println!("Could not preinitialize the log subsystem: {}", e);
+        return Err(Error::BigEndianElfOnLittle);;
+    }
+    // warn!("this is a warning with ehdr: {:?}", ehdr);
+    // error!("this is an error");
+    // panic!("FIRECRACKER PANICKING HERE with ehdr: {:?}", ehdr);
+
     if ehdr.e_ident[elf::EI_DATA as usize] != elf::ELFDATA2LSB as u8 {
         return Err(Error::BigEndianElfOnLittle);
     }
@@ -113,6 +132,8 @@ where
         return Err(Error::InvalidEntryAddress);
     }
 
+    let mut kernel_entry_addr = ehdr.e_entry as usize;
+
     kernel_image
         .seek(SeekFrom::Start(ehdr.e_phoff))
         .map_err(|_| Error::SeekProgramHeader)?;
@@ -124,10 +145,129 @@ where
 
     // Read in each section pointed to by the program headers.
     for phdr in &phdrs {
-        if (phdr.p_type & elf::PT_LOAD) == 0 || phdr.p_filesz == 0 {
+        if (phdr.p_type != elf::PT_LOAD && phdr.p_type != elf::PT_NOTE) || phdr.p_filesz == 0 {
             continue;
         }
 
+        if phdr.p_type == elf::PT_NOTE {
+            warn!(
+                "FIRECRACKER: Found PT_NOTE segment at offset: {:#x?}, with size {:#?}",
+                phdr.p_offset, phdr.p_filesz
+            );
+
+            let n_align = phdr.p_align;
+
+            warn!("The alignment of the note fields is {:#?}", n_align);
+
+            let mut testoff = kernel_image
+                .seek(SeekFrom::Start(phdr.p_offset))
+                .map_err(|_| Error::SeekNoteHeader)?;
+
+            warn!("The TESTOFFSET after initial seek is {:#x?}", testoff);
+
+            // Now that the segment has been found, we must locate the ELF
+            // note with the correct type that has the PVH entry point.
+            /* Note header in a PT_NOTE section */
+            /*
+                typedef struct elf64_note {
+                      Elf64_Word n_namesz;  /* Name size */
+                      Elf64_Word n_descsz;  /* Content size */
+                      Elf64_Word n_type;    /* Content type */
+                } Elf64_Nhdr;
+            */
+            let mut nhdr: elf::Elf64_Nhdr = Default::default();
+            unsafe {
+                // read_struct is safe when reading a POD struct.  It can be used and dropped without issue.
+                sys_util::read_struct(kernel_image, &mut nhdr)
+                    .map_err(|_| Error::ReadKernelDataStruct("Failed to read ELF Note header"))?;
+            }
+
+            testoff = kernel_image
+                .seek(SeekFrom::Current(0))
+                .map_err(|_| Error::SeekNoteHeader)?;
+
+            warn!("The TESTOFFSET after the first READ of Note Hdr struct is {:#x?}", testoff);
+
+            let mut tot_size = (testoff - phdr.p_offset) as u64;
+            warn!(" TOT_SIZE: The total size read so far is {:?}", tot_size);
+            let mut n_offset;
+
+            while nhdr.n_type != elf::XEN_ELFNOTE_PHYS32_ENTRY && tot_size < phdr.p_filesz {
+                warn!("Parsed Note header {:#?}", nhdr);
+
+                /* 
+                    Get size of the struct using: mem::size_of::<elf::Elf64_Nhdr>()
+                    but that is not needed when using SeekFrom::Current().
+                */
+                n_offset =
+                    align_up(nhdr.n_namesz as usize, n_align as usize) +
+                    align_up(nhdr.n_descsz as usize, n_align as usize);
+
+                warn!("n_offset is {:#?}", n_offset);
+                // Seeking the new note struct
+
+                kernel_image
+                    .seek(SeekFrom::Current(n_offset as i64))
+                    .map_err(|_| Error::SeekNoteHeader)?;
+
+                // Read the next header into nhdr
+                unsafe {
+                    sys_util::read_struct(kernel_image, &mut nhdr).map_err(|_| {
+                        Error::ReadKernelDataStruct("Failed to read ELF Note header")
+                    })?;
+                }
+                tot_size += n_offset as u64;
+            }
+
+            if tot_size >= phdr.p_filesz as u64 {
+                continue;
+            }
+            warn!("Parsed Note header with PVH entry {:#?}", nhdr);
+
+            // TODO fix the exit loop condition to work when no PVH note is found
+
+            // Now we exited the loop because the note was found
+            /*
+                   struct elf64_note *nhdr64 = (struct elf64_note *)arg1;
+                    uint64_t nhdr_size64 = sizeof(struct elf64_note);
+                    uint64_t phdr_align = *(uint64_t *)arg2;
+                    uint64_t nhdr_namesz = nhdr64->n_namesz;
+
+                    elf_note_data_addr =
+                        ((void *)nhdr64) + nhdr_size64 +
+                        QEMU_ALIGN_UP(nhdr_namesz, phdr_align);
+            */
+            // let reference = kernel_image.by_ref();
+            n_offset = align_up(nhdr.n_namesz as usize, n_align as usize);
+
+            kernel_image
+                .seek(SeekFrom::Current(n_offset as i64))
+                .map_err(|_| Error::SeekNoteHeader)?;
+
+            let mut pvh_entry = vec![0; nhdr.n_descsz as usize];
+
+            //kernel_image.take(nhdr.n_descsz as u64).read_exact(&mut pvh_entry);
+            kernel_image.read_exact(&mut pvh_entry);
+
+            //reference.take(nhdr.n_descsz as u64).read_exact(&mut pvh_entry)?;
+            //causes error:  the trait `std::convert::From<std::io::Error>` is not implemented for `loader::Error`
+
+            warn!("pvh_entry vector is {:#x?}", pvh_entry);
+
+            // Using the byteorder crate to do this conversion.
+            let pvh_address : u64 = LittleEndian::read_u64(& pvh_entry);
+
+            warn!("pvh_address is {:#x?}", pvh_address);
+
+            kernel_entry_addr = pvh_address as usize;
+        }
+
+        // Don't write this segment to guest memory. Although this does not seem to cause
+        // any problems if done. Must find out if there is any use for it after the kernel
+        // is booted.
+        if phdr.p_type == elf::PT_NOTE {
+            continue;
+        }
         kernel_image
             .seek(SeekFrom::Start(phdr.p_offset))
             .map_err(|_| Error::SeekKernelStart)?;
@@ -142,7 +282,26 @@ where
             .map_err(|_| Error::ReadKernelImage)?;
     }
 
-    Ok(GuestAddress(ehdr.e_entry as usize))
+    // Ok(GuestAddress(ehdr.e_entry as usize))
+    
+    warn!("ehdr.e_entry: {:#x?}", ehdr.e_entry);
+    warn!("kernel_entry_addr: {:#x?}", kernel_entry_addr);
+    Ok(GuestAddress(kernel_entry_addr))
+
+}
+
+/// Align address upwards.
+///
+/// Returns the smallest x with alignment `align` so that x >= addr. The alignment must be
+/// a power of 2.
+pub fn align_up(addr: usize, align: usize) -> usize {
+    assert!(align.is_power_of_two(), "`align` must be a power of two");
+    let align_mask = align - 1;
+    if addr & align_mask == 0 {
+        addr // already aligned
+    } else {
+        (addr | align_mask) + 1
+    }
 }
 
 #[cfg(target_arch = "aarch64")]

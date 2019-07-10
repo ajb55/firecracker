@@ -118,6 +118,7 @@ pub fn configure_system(
     params.0.hdr.boot_flag = KERNEL_BOOT_FLAG_MAGIC;
     params.0.hdr.header = KERNEL_HDR_MAGIC;
     params.0.hdr.cmd_line_ptr = cmdline_addr.offset() as u32;
+    warn!("The address of the kernel CMDLINE copied into bootparams is {:#x?}", cmdline_addr);
     params.0.hdr.cmdline_size = cmdline_size as u32;
     params.0.hdr.kernel_alignment = KERNEL_MIN_ALIGNMENT_BYTES;
 
