@@ -1403,7 +1403,8 @@ impl Vmm {
 
         let vcpus;
 
-        let mut pvh_boot: bool = Default::default();
+        // let mut pvh_boot: bool = Default::default();
+        let pvh_boot: bool;
 
         // For x86_64 we need to create the interrupt controller before calling `KVM_CREATE_VCPUS`
         // while on aarch64 we need to do it the other way around.

@@ -154,6 +154,13 @@ pub fn configure_system(
         }
     }
 
+    warn!("In CONFIGURE_SYSTEM, the number of E820 entries is {:#?}, and E820map is as follows:",
+        params.0.e820_entries);
+
+    for i in 0..params.0.e820_entries {
+        warn!("i: {:?}, entry: {:#x?}", i, params.0.e820_map[i as usize]);
+    }
+
     let zero_page_addr = GuestAddress(layout::ZERO_PAGE_START);
     guest_mem
         .checked_offset(zero_page_addr, mem::size_of::<boot_params>())
@@ -216,20 +223,105 @@ fn setup_pvh_boot(
     num_cpus: u8,
 ) -> super::Result<()> {
 
+    const PVH_START_INFO: usize = 0x6000;
+    const MEMMAP_START: usize = 0x7000;
     const XEN_HVM_START_MAGIC_VALUE: u32 = 0x336ec578;
 
+    let himem_start = GuestAddress(layout::HIMEM_START);
+    
+    let first_addr_past_32bits = GuestAddress(FIRST_ADDR_PAST_32BITS);
+    let end_32bit_gap_start = GuestAddress(get_32bit_gap_start());
+
+    // Note that this puts the mptable at the last 1k of Linux's 640k base RAM
+    mptable::setup_mptable(guest_mem, num_cpus).map_err(Error::MpTableSetup)?;
+    
     let mut start_info: HvmStartInfoWrapper = HvmStartInfoWrapper(hvm_start_info::default());
+    
     start_info.0.magic = XEN_HVM_START_MAGIC_VALUE;
     start_info.0.version = 1;   // pvh has version 1
     start_info.0.nr_modules = 0;
     start_info.0.cmdline_paddr = cmdline_addr.offset() as u64;
 
-    // The next two values must come from the memory maps (E820)
-    // start_info->memmap_entries = memmap_entries;
-    // start_info->memmap_paddr = MEMMAP_START;
-
+    start_info.0.memmap_paddr = MEMMAP_START as u64;
     warn!("In setup_pvh_boot, initialized hvm_start_info {:#x?}", start_info);
+
+    /*
+     * The vector to hold the memory maps which needs to be written to guest memory
+     * at MEMMAP_START after all of the mappings are recorded.
+    */
+    let mut memmap: Vec<hvm_memmap_table_entry> = Vec::new();
+
+    let mut memmap_entries: u32 = 0;
+
+    /*
+     * Now creating the E820 entries.
+     */
+    // Initial memory mapping
+    add_memmap_entry(&mut memmap, 0u64, EBDA_START as u64, E820_RAM as u32);
+    /*
+    memmap.push(
+        hvm_memmap_table_entry{
+            addr: 0,
+            size: EBDA_START,
+            type_: E820_RAM,
+            reserved: 0,
+        }
+    );
+    */
+    memmap_entries += 1;
+
+    warn!("memmap is {:#x?}, and memmap_entries: {:#x?}", memmap, memmap_entries);
+
+    let mem_end = guest_mem.end_addr();
+
+    warn!("The end of the guest memory (mem_end) is {:#x?}", mem_end);
+/*
+    if mem_end < end_32bit_gap_start {
+
+        add_e820_entry(
+            &mut params.0,
+            himem_start.offset() as u64,
+            mem_end.offset_from(himem_start) as u64,
+            E820_RAM,
+        )?;
+    } else {
+        add_e820_entry(
+            &mut params.0,
+            himem_start.offset() as u64,
+            end_32bit_gap_start.offset_from(himem_start) as u64,
+            E820_RAM,
+        )?;
+        if mem_end > first_addr_past_32bits {
+            add_e820_entry(
+                &mut params.0,
+                first_addr_past_32bits.offset() as u64,
+                mem_end.offset_from(first_addr_past_32bits) as u64,
+                E820_RAM,
+            )?;
+        }
+    }
+*/
     warn!("In setup_pvh_boot(), returning OK");
+    Ok(())
+}
+
+fn add_memmap_entry(
+    memmap: &mut Vec<hvm_memmap_table_entry>,
+    addr: u64,
+    size: u64,
+    mem_type: u32,
+) -> Result<(), Error> {
+
+    // Add the table entry to the vector
+    memmap.push(
+        hvm_memmap_table_entry{
+            addr: addr,
+            size: size,
+            type_: mem_type,
+            reserved: 0,
+        }
+    );
+
     Ok(())
 }
 
