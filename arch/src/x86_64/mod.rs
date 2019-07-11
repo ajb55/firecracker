@@ -102,7 +102,7 @@ pub fn configure_system(
     pvh_boot: bool,
 ) -> super::Result<()> {
     if pvh_boot {
-        setup_pvh_boot(guest_mem, cmdline_addr, cmdline_size, num_cpus)?;
+        setup_pvh_boot(guest_mem, cmdline_addr, num_cpus)?;
         return Ok(());
     }
     const KERNEL_BOOT_FLAG_MAGIC: u16 = 0xaa55;
@@ -186,25 +186,6 @@ pub struct hvm_start_info {
     pub memmap_entries: u32,
     pub reserved: u32,
 }
-
-#[repr(C)]
-#[derive(Debug, Copy, Clone)]
-pub struct hvm_modlist_entry {
-    pub paddr: u64,
-    pub size: u64,
-    pub cmdline_paddr: u64,
-    pub reserved: u64,
-}
-
-#[repr(C)]
-#[derive(Debug, Copy, Clone)]
-pub struct hvm_memmap_table_entry {
-    pub addr: u64,
-    pub size: u64,
-    pub type_: u32,
-    pub reserved: u32,
-}
-
 impl Default for hvm_start_info {
     fn default() -> Self {
         unsafe { ::std::mem::zeroed() }
@@ -216,10 +197,33 @@ struct HvmStartInfoWrapper(hvm_start_info);
 
 unsafe impl DataInit for HvmStartInfoWrapper {}
 
+#[repr(C)]
+#[derive(Debug, Copy, Clone)]
+pub struct hvm_memmap_table_entry {
+    pub addr: u64,
+    pub size: u64,
+    pub type_: u32,
+    pub reserved: u32,
+}
+
+impl Default for hvm_memmap_table_entry {
+    fn default() -> Self {
+        unsafe { ::std::mem::zeroed() }
+    }
+}
+
+#[derive(Debug, Copy, Clone)]
+struct HvmMemmapTableEntryWrapper(hvm_memmap_table_entry);
+
+//struct HvmMemmapTableEntryWrapper(Vec<hvm_memmap_table_entry>);
+
+unsafe impl DataInit for HvmMemmapTableEntryWrapper {}
+
+//unsafe impl DataInit for std::vec::Vec<x86_64::hvm_memmap_table_entry> {}
+
 fn setup_pvh_boot(
     guest_mem: &GuestMemory,
     cmdline_addr: GuestAddress,
-    cmdline_size: usize,
     num_cpus: u8,
 ) -> super::Result<()> {
 
@@ -251,13 +255,9 @@ fn setup_pvh_boot(
     */
     let mut memmap: Vec<hvm_memmap_table_entry> = Vec::new();
 
-    let mut memmap_entries: u32 = 0;
-
     /*
      * Now creating the E820 entries.
      */
-    // Initial memory mapping
-    add_memmap_entry(&mut memmap, 0u64, EBDA_START as u64, E820_RAM as u32);
     /*
     memmap.push(
         hvm_memmap_table_entry{
@@ -268,39 +268,91 @@ fn setup_pvh_boot(
         }
     );
     */
-    memmap_entries += 1;
-
-    warn!("memmap is {:#x?}, and memmap_entries: {:#x?}", memmap, memmap_entries);
+    add_memmap_entry(
+        &mut memmap,
+        0u64,
+        EBDA_START as u64,
+        E820_RAM,
+    );
 
     let mem_end = guest_mem.end_addr();
 
     warn!("The end of the guest memory (mem_end) is {:#x?}", mem_end);
-/*
-    if mem_end < end_32bit_gap_start {
 
-        add_e820_entry(
-            &mut params.0,
+    if mem_end < end_32bit_gap_start {
+        add_memmap_entry(
+            &mut memmap,
             himem_start.offset() as u64,
             mem_end.offset_from(himem_start) as u64,
             E820_RAM,
-        )?;
+        );
     } else {
-        add_e820_entry(
-            &mut params.0,
+        add_memmap_entry(
+            &mut memmap,
             himem_start.offset() as u64,
             end_32bit_gap_start.offset_from(himem_start) as u64,
             E820_RAM,
-        )?;
+        );
         if mem_end > first_addr_past_32bits {
-            add_e820_entry(
-                &mut params.0,
+            add_memmap_entry(
+                &mut memmap,
                 first_addr_past_32bits.offset() as u64,
                 mem_end.offset_from(first_addr_past_32bits) as u64,
                 E820_RAM,
-            )?;
+            );
         }
     }
-*/
+
+    start_info.0.memmap_entries = memmap.len() as u32;
+
+    warn!("memmap is {:#x?}, and start_info.0.memmap_entries: {:#x?}, and memmap.len: {:#x?}",
+        memmap, start_info.0.memmap_entries, memmap.len());
+
+    /* Must now copy the vector with the memmap table to the MEMMAP_START address which
+    is pointed to by memmap_paddr field of the hvm_start_info struct. Then, the hvm_start_info
+    struct itself must be stored at PVH_START_INFO and %ebx must contain that value as required
+    by the PVH ABI
+    */
+
+    let memmap_table_addr = GuestAddress(MEMMAP_START);
+    let start_info_addr = GuestAddress(PVH_START_INFO);
+
+    // for every entry in the memmap vector, create a HvmMemmapTableEntryWrapper
+    // and add it to the guest memory using the write_obj_at_address method.
+
+    guest_mem
+        .checked_offset(memmap_table_addr,
+            mem::size_of::<hvm_memmap_table_entry>() * start_info.0.memmap_entries as usize)
+        .ok_or(Error::ZeroPagePastRamEnd)?;
+
+    /* Need to extract the entries from the vector in order to create the
+     * the wrapper struct that allows to write the mappings to guest memory
+     */
+    let mut memmap_entry_addr = memmap_table_addr;
+    for memmap_entry in memmap {
+        let map_entry_wrapper: HvmMemmapTableEntryWrapper =
+            HvmMemmapTableEntryWrapper(memmap_entry);
+
+        warn!("map_entry_wrapper is: {:#x?} and its type is {:#x?}", map_entry_wrapper, memmap_entry);
+        
+        guest_mem
+            .write_obj_at_addr(map_entry_wrapper, memmap_entry_addr)
+            .map_err(|_| Error::ZeroPageSetup)?;
+        
+        memmap_entry_addr = memmap_entry_addr.unchecked_add(mem::size_of::<hvm_memmap_table_entry>());
+        warn!("memmap_entry_addr is: {:#x?}", memmap_entry_addr);
+   
+    }
+
+
+    guest_mem
+        .checked_offset(start_info_addr, mem::size_of::<hvm_start_info>())
+        .ok_or(Error::ZeroPagePastRamEnd)?;
+
+    guest_mem
+        .write_obj_at_addr(start_info, start_info_addr)
+        .map_err(|_| Error::ZeroPageSetup)?;
+
     warn!("In setup_pvh_boot(), returning OK");
     Ok(())
 }
@@ -321,7 +373,6 @@ fn add_memmap_entry(
             reserved: 0,
         }
     );
-
     Ok(())
 }
 
