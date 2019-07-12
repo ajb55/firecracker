@@ -1219,7 +1219,9 @@ impl Vmm {
             let io_bus = self.legacy_device_manager.io_bus.clone();
             let mut vcpu = Vcpu::new(cpu_id, &self.vm, io_bus, request_ts.clone())
                 .map_err(StartMicrovmError::Vcpu)?;
+
             warn!("On create_vcpus(), calling vcpu.configure() for cpu_id {:?}", cpu_id);
+
             vcpu.configure(&self.vm_config, entry_addr, &self.vm)
                 .map_err(StartMicrovmError::VcpuConfigure)?;
             vcpus.push(vcpu);
@@ -1415,9 +1417,12 @@ impl Vmm {
             self.attach_legacy_devices()?;
 
             let entry_addr = self.load_kernel()?;
-            vcpus = self.create_vcpus(entry_addr, request_ts)?;
+
             warn!("In START_MICROVM(), entry_addr.offset() is {:#x?}", entry_addr.offset());
             pvh_boot = entry_addr.offset() != 0x1000000 as usize;
+
+            vcpus = self.create_vcpus(entry_addr, request_ts)?;
+
        
             warn!("In START_MICROVM(), pvh_boot is {:?}", pvh_boot);
         }

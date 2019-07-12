@@ -290,7 +290,10 @@ impl Vcpu {
         let vm_memory = vm
             .get_memory()
             .ok_or(Error::GuestMemory(GuestMemoryError::MemoryNotInitialized))?;
-        warn!("In vcpu.configure(), calling setup_regs() with kernel_start_addr = {:#x?}", kernel_start_addr);
+        
+        warn!("In vcpu.configure(), calling setup_regs() with kernel_start_addr = {:#x?}",
+            kernel_start_addr);
+
         arch::x86_64::regs::setup_regs(&self.fd, kernel_start_addr.offset() as u64)
             .map_err(Error::REGSConfiguration)?;
         arch::x86_64::regs::setup_fpu(&self.fd).map_err(Error::FPUConfiguration)?;

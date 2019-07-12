@@ -150,20 +150,20 @@ where
         }
 
         if phdr.p_type == elf::PT_NOTE {
-            warn!(
+             warn!(
                 "FIRECRACKER: Found PT_NOTE segment at offset: {:#x?}, with size {:#?}",
                 phdr.p_offset, phdr.p_filesz
             );
 
             let n_align = phdr.p_align;
 
-            warn!("The alignment of the note fields is {:#?}", n_align);
+            // warn!("The alignment of the note fields is {:#?}", n_align);
 
-            let mut testoff = kernel_image
+            kernel_image
                 .seek(SeekFrom::Start(phdr.p_offset))
                 .map_err(|_| Error::SeekNoteHeader)?;
 
-            warn!("The TESTOFFSET after initial seek is {:#x?}", testoff);
+            // warn!("The TESTOFFSET after initial seek is {:#x?}", testoff);
 
             // Now that the segment has been found, we must locate the ELF
             // note with the correct type that has the PVH entry point.
@@ -181,19 +181,20 @@ where
                 sys_util::read_struct(kernel_image, &mut nhdr)
                     .map_err(|_| Error::ReadKernelDataStruct("Failed to read ELF Note header"))?;
             }
-
-            testoff = kernel_image
+            
+            
+            let mut testoff = kernel_image
                 .seek(SeekFrom::Current(0))
                 .map_err(|_| Error::SeekNoteHeader)?;
 
-            warn!("The TESTOFFSET after the first READ of Note Hdr struct is {:#x?}", testoff);
+            // warn!("The TESTOFFSET after the first READ of Note Hdr struct is {:#x?}", testoff);
 
             let mut tot_size = (testoff - phdr.p_offset) as u64;
-            warn!(" TOT_SIZE: The total size read so far is {:?}", tot_size);
+            // warn!(" TOT_SIZE: The total size read so far is {:?}", tot_size);
             let mut n_offset;
 
             while nhdr.n_type != elf::XEN_ELFNOTE_PHYS32_ENTRY && tot_size < phdr.p_filesz {
-                warn!("Parsed Note header {:#?}", nhdr);
+                // warn!("Parsed Note header {:#?}", nhdr);
 
                 /* 
                     Get size of the struct using: mem::size_of::<elf::Elf64_Nhdr>()
@@ -203,7 +204,7 @@ where
                     align_up(nhdr.n_namesz as usize, n_align as usize) +
                     align_up(nhdr.n_descsz as usize, n_align as usize);
 
-                warn!("n_offset is {:#?}", n_offset);
+                // warn!("n_offset is {:#?}", n_offset);
                 // Seeking the new note struct
 
                 kernel_image
@@ -223,8 +224,6 @@ where
                 continue;
             }
             warn!("Parsed Note header with PVH entry {:#?}", nhdr);
-
-            // TODO fix the exit loop condition to work when no PVH note is found
 
             // Now we exited the loop because the note was found
             /*
@@ -247,17 +246,17 @@ where
             let mut pvh_entry = vec![0; nhdr.n_descsz as usize];
 
             //kernel_image.take(nhdr.n_descsz as u64).read_exact(&mut pvh_entry);
-            kernel_image.read_exact(&mut pvh_entry);
+            kernel_image.read_exact(&mut pvh_entry).map_err(|_| ()).ok();
 
             //reference.take(nhdr.n_descsz as u64).read_exact(&mut pvh_entry)?;
             //causes error:  the trait `std::convert::From<std::io::Error>` is not implemented for `loader::Error`
 
-            warn!("pvh_entry vector is {:#x?}", pvh_entry);
+            // warn!("pvh_entry vector is {:#x?}", pvh_entry);
 
             // Using the byteorder crate to do this conversion.
             let pvh_address : u64 = LittleEndian::read_u64(& pvh_entry);
 
-            warn!("pvh_address is {:#x?}", pvh_address);
+            // warn!("pvh_address is {:#x?}", pvh_address);
 
             kernel_entry_addr = pvh_address as usize;
         }
@@ -284,8 +283,9 @@ where
 
     // Ok(GuestAddress(ehdr.e_entry as usize))
     
-    warn!("ehdr.e_entry: {:#x?}", ehdr.e_entry);
-    warn!("kernel_entry_addr: {:#x?}", kernel_entry_addr);
+    // warn!("ehdr.e_entry: {:#x?}", ehdr.e_entry);
+    // warn!("kernel_entry_addr: {:#x?}", kernel_entry_addr);
+    
     Ok(GuestAddress(kernel_entry_addr))
 
 }

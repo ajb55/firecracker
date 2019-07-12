@@ -30,3 +30,6 @@ pub const KVM_TSS_ADDRESS: usize = 0xfffb_d000;
 
 /// The 'zero page', a.k.a linux kernel bootparams.
 pub const ZERO_PAGE_START: usize = 0x7000;
+
+/// The address for the hvm_start_info struct used in PVH boot
+pub const PVH_START_INFO: usize = 0x6000;

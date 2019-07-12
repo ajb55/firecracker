@@ -227,7 +227,7 @@ fn setup_pvh_boot(
     num_cpus: u8,
 ) -> super::Result<()> {
 
-    const PVH_START_INFO: usize = 0x6000;
+    // const PVH_START_INFO: usize = 0x6000;
     const MEMMAP_START: usize = 0x7000;
     const XEN_HVM_START_MAGIC_VALUE: u32 = 0x336ec578;
 
@@ -314,26 +314,25 @@ fn setup_pvh_boot(
     by the PVH ABI
     */
 
-    let memmap_table_addr = GuestAddress(MEMMAP_START);
-    let start_info_addr = GuestAddress(PVH_START_INFO);
+    let mut memmap_entry_addr = GuestAddress(MEMMAP_START);
+    let start_info_addr = GuestAddress(layout::PVH_START_INFO);
 
     // for every entry in the memmap vector, create a HvmMemmapTableEntryWrapper
     // and add it to the guest memory using the write_obj_at_address method.
 
     guest_mem
-        .checked_offset(memmap_table_addr,
+        .checked_offset(GuestAddress(MEMMAP_START),
             mem::size_of::<hvm_memmap_table_entry>() * start_info.0.memmap_entries as usize)
         .ok_or(Error::ZeroPagePastRamEnd)?;
 
     /* Need to extract the entries from the vector in order to create the
      * the wrapper struct that allows to write the mappings to guest memory
      */
-    let mut memmap_entry_addr = memmap_table_addr;
     for memmap_entry in memmap {
         let map_entry_wrapper: HvmMemmapTableEntryWrapper =
             HvmMemmapTableEntryWrapper(memmap_entry);
 
-        warn!("map_entry_wrapper is: {:#x?} and its type is {:#x?}", map_entry_wrapper, memmap_entry);
+        warn!("map_entry_wrapper is: {:#x?}", map_entry_wrapper);
         
         guest_mem
             .write_obj_at_addr(map_entry_wrapper, memmap_entry_addr)
@@ -341,9 +340,8 @@ fn setup_pvh_boot(
         
         memmap_entry_addr = memmap_entry_addr.unchecked_add(mem::size_of::<hvm_memmap_table_entry>());
         warn!("memmap_entry_addr is: {:#x?}", memmap_entry_addr);
-   
-    }
 
+    }
 
     guest_mem
         .checked_offset(start_info_addr, mem::size_of::<hvm_start_info>())
@@ -353,6 +351,7 @@ fn setup_pvh_boot(
         .write_obj_at_addr(start_info, start_info_addr)
         .map_err(|_| Error::ZeroPageSetup)?;
 
+    warn!("At end of setup_pvh_boot, hvm_start_info is {:#x?}", start_info);
     warn!("In setup_pvh_boot(), returning OK");
     Ok(())
 }

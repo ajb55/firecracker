@@ -96,21 +96,47 @@ pub fn setup_msrs(vcpu: &VcpuFd) -> Result<()> {
 /// * `vcpu` - Structure for the VCPU that holds the VCPU's fd.
 /// * `boot_ip` - Starting instruction pointer.
 pub fn setup_regs(vcpu: &VcpuFd, boot_ip: u64) -> Result<()> {
-    let regs: kvm_regs = kvm_regs {
-        rflags: 0x0000_0000_0000_0002u64,
-        rip: boot_ip,
-        // Frame pointer. It gets a snapshot of the stack pointer (rsp) so that when adjustments are
-        // made to rsp (i.e. reserving space for local variables or pushing values on to the stack),
-        // local variables and function parameters are still accessible from a constant offset from rbp.
-        rsp: super::layout::BOOT_STACK_POINTER as u64,
-        // Starting stack pointer.
-        rbp: super::layout::BOOT_STACK_POINTER as u64,
-        // Must point to zero page address per Linux ABI. This is x86_64 specific.
-        rsi: super::layout::ZERO_PAGE_START as u64,
-        ..Default::default()
-    };
 
-    vcpu.set_regs(&regs).map_err(Error::SetBaseRegisters)
+    // let mut pvh_rbx: u64 = Default::default();
+
+    if boot_ip != 0x1000000u64 {
+        // let pvh_rbx = super::layout::PVH_START_INFO as u64;
+        let regs: kvm_regs = kvm_regs {
+            rflags: 0x0000_0000_0000_0002u64,
+
+            rbx: super::layout::PVH_START_INFO as u64,
+
+            rip: boot_ip,
+            ..Default::default()
+        };
+
+        warn!("PVH PATH: PRINTING REGS kvm_regs: {:#x?}", regs);
+
+        return vcpu.set_regs(&regs).map_err(Error::SetBaseRegisters);
+
+    } else {
+
+        let regs: kvm_regs = kvm_regs {
+            rflags: 0x0000_0000_0000_0002u64,
+
+            // rbx: pvh_rbx,
+
+            rip: boot_ip,
+            // Frame pointer. It gets a snapshot of the stack pointer (rsp) so that when adjustments are
+            // made to rsp (i.e. reserving space for local variables or pushing values on to the stack),
+            // local variables and function parameters are still accessible from a constant offset from rbp.
+            rsp: super::layout::BOOT_STACK_POINTER as u64,
+            // Starting stack pointer.
+            rbp: super::layout::BOOT_STACK_POINTER as u64,
+            // Must point to zero page address per Linux ABI. This is x86_64 specific.
+            rsi: super::layout::ZERO_PAGE_START as u64,
+            ..Default::default()
+        };
+
+        warn!("REGULAR BOOT PATH: PRINTING REGS kvm_regs: {:#x?}", regs);
+
+        return vcpu.set_regs(&regs).map_err(Error::SetBaseRegisters);
+    }
 }
 
 /// Configures the segment registers and system page tables for a given CPU.
@@ -162,7 +188,15 @@ fn write_idt_value(val: u64, guest_mem: &GuestMemory) -> Result<()> {
 
 fn configure_segments_and_sregs(mem: &GuestMemory, sregs: &mut kvm_sregs) -> Result<()> {
     let gdt_table: [u64; BOOT_GDT_MAX as usize] = [
+
         gdt_entry(0, 0, 0),            // NULL
+        /*
+        // PVH GDT
+        gdt_entry(0xc09b, 0, 0xfffff), // CODE
+        gdt_entry(0xc093, 0, 0xfffff), // DATA
+        gdt_entry(0x008b, 0, 0xfffff), // TSS
+        */
+        // Regular Boot GDT
         gdt_entry(0xa09b, 0, 0xfffff), // CODE
         gdt_entry(0xc093, 0, 0xfffff), // DATA
         gdt_entry(0x808b, 0, 0xfffff), // TSS
