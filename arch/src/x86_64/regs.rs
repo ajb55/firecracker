@@ -190,21 +190,25 @@ fn configure_segments_and_sregs(mem: &GuestMemory, sregs: &mut kvm_sregs) -> Res
     let gdt_table: [u64; BOOT_GDT_MAX as usize] = [
 
         gdt_entry(0, 0, 0),            // NULL
-        /*
+
         // PVH GDT
         gdt_entry(0xc09b, 0, 0xfffff), // CODE
         gdt_entry(0xc093, 0, 0xfffff), // DATA
         gdt_entry(0x008b, 0, 0xfffff), // TSS
-        */
+        /*
         // Regular Boot GDT
         gdt_entry(0xa09b, 0, 0xfffff), // CODE
         gdt_entry(0xc093, 0, 0xfffff), // DATA
         gdt_entry(0x808b, 0, 0xfffff), // TSS
+        */
     ];
 
     let code_seg = kvm_segment_from_gdt(gdt_table[1], 1);
     let data_seg = kvm_segment_from_gdt(gdt_table[2], 2);
     let tss_seg = kvm_segment_from_gdt(gdt_table[3], 3);
+
+/*
+    NOT NEEDED FOR PVH BOOT???
 
     // Write segments
     write_gdt_table(&gdt_table[..], mem)?;
@@ -214,7 +218,7 @@ fn configure_segments_and_sregs(mem: &GuestMemory, sregs: &mut kvm_sregs) -> Res
     write_idt_value(0, mem)?;
     sregs.idt.base = BOOT_IDT_OFFSET as u64;
     sregs.idt.limit = mem::size_of::<u64>() as u16 - 1;
-
+*/
     sregs.cs = code_seg;
     sregs.ds = data_seg;
     sregs.es = data_seg;
@@ -224,9 +228,15 @@ fn configure_segments_and_sregs(mem: &GuestMemory, sregs: &mut kvm_sregs) -> Res
     sregs.tr = tss_seg;
 
     /* 64-bit protected mode */
+    /*
     sregs.cr0 |= X86_CR0_PE;
     sregs.efer |= EFER_LME | EFER_LMA;
+    */
+    // For PVH boot
+    sregs.cr0 = X86_CR0_PE;
+    sregs.cr4 = 0;
 
+    warn!("CONFIGURE_SEGMENTS_AND_SREGS(), sregs: {:#x?}", sregs);
     Ok(())
 }
 
