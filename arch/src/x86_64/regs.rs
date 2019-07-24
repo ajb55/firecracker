@@ -191,7 +191,7 @@ fn configure_segments_and_sregs(mem: &GuestMemory, sregs: &mut kvm_sregs) -> Res
 
         gdt_entry(0, 0, 0),            // NULL
 
-        // PVH GDT
+        // PVH_BOOT
         gdt_entry(0xc09b, 0, 0xfffff), // CODE
         gdt_entry(0xc093, 0, 0xfffff), // DATA
         gdt_entry(0x008b, 0, 0xfffff), // TSS
@@ -209,7 +209,7 @@ fn configure_segments_and_sregs(mem: &GuestMemory, sregs: &mut kvm_sregs) -> Res
 
 /*
     NOT NEEDED FOR PVH BOOT???
-
+    // NOT PVH_BOOT
     // Write segments
     write_gdt_table(&gdt_table[..], mem)?;
     sregs.gdt.base = BOOT_GDT_OFFSET as u64;
@@ -228,7 +228,7 @@ fn configure_segments_and_sregs(mem: &GuestMemory, sregs: &mut kvm_sregs) -> Res
     sregs.tr = tss_seg;
 
     /* 64-bit protected mode */
-    /*
+    /* NOT PVH_BOOT
     sregs.cr0 |= X86_CR0_PE;
     sregs.efer |= EFER_LME | EFER_LMA;
     */
@@ -262,10 +262,12 @@ fn setup_page_tables(mem: &GuestMemory, sregs: &mut kvm_sregs) -> Result<()> {
         )
         .map_err(|_| Error::WritePDEAddress)?;
     }
-
+/*
+    // NOT PVH_BOOT
     sregs.cr3 = boot_pml4_addr.offset() as u64;
     sregs.cr4 |= X86_CR4_PAE;
     sregs.cr0 |= X86_CR0_PG;
+*/
     Ok(())
 }
 

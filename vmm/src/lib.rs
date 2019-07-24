@@ -1442,6 +1442,8 @@ impl Vmm {
         self.register_events()?;
 
         self.start_vcpus(vcpus)?;
+
+        warn!("ARE WE GETTING HERE??");
         // Use expect() to crash if the other thread poisoned this lock.
         self.shared_info
             .write()
